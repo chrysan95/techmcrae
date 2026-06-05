@@ -43,7 +43,7 @@ class AttendanceController extends Controller
             $status = 'Absent';
             if ($onLeave) $status = 'On Leave';
             elseif ($checkIn) {
-                $status = Carbon::parse($checkIn->attendance_hour)->gt(Carbon::parse('08:30:00')) ? 'Late' : 'On Time';
+                $status = Carbon::parse($checkIn->attendance_hour)->gt(Carbon::parse('10:00:00')) ? 'Late' : 'On Time';
             }
 
             // Append custom label identifier if user is an admin
