@@ -47,6 +47,7 @@ class EmpPortalController extends Controller
             'location'           => '—',
             'expected_out'       => '—',
             'worked'             => '—',
+            'met_expected'       => false,
         ];
 
         if ($checkIn) {
@@ -65,6 +66,7 @@ class EmpPortalController extends Controller
                 $clock['state']     = 'day_complete';
                 $clock['check_out'] = $co->format('H:i');
                 $clock['worked']    = sprintf('%02d:%02d:00', intdiv($min, 60), $min % 60);
+                $clock['met_expected'] = $co->gte($expected);
             } else {
                 $clock['state'] = 'clocked_in';
             }

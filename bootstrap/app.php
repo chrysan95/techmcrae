@@ -3,6 +3,9 @@
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 use App\Http\Middleware\RoleMiddleware;
 
 return Application::configure(basePath: dirname(__DIR__))
@@ -15,18 +18,26 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'role' => RoleMiddleware::class,
         ]);
-        $middleware->validateCsrfTokens(except: [
-        // soalnya kalo ga diginiin pas masi localhost nanti error pokoknya gitulah
-        'logout',
-        'leave/requests/*/approve',
-        'leave/requests/*/reject',
-        'leave/requests/approve-all',
-        'portal/leave-request',
-        'portal/leave/*/withdraw',
-        'portal/clock-in',
-        'portal/clock-out'
-        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        //
+        $exceptions->render(function (HttpException $e, Request $request) {
+            if ($e->getStatusCode() !== 419) {
+                return null;
+            }
+
+            if ($request->expectsJson() || $request->ajax()) {
+                return response()->json(['message' => 'Session expired. Please refresh the page.'], 419);
+            }
+
+            if ($request->is('logout')) {
+                Auth::logout();
+                $request->session()->invalidate();
+                $request->session()->regenerateToken();
+                return redirect('/');
+            }
+
+            return redirect()->back()
+                ->withInput($request->except('password', '_token'))
+                ->withErrors(['msg' => 'Your session expired. Please try again.']);
+        });
     })->create();

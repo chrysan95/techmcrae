@@ -4,7 +4,7 @@
 
 @section('content')
 <div class="dashboard-page">
-    <h1 class="welcome-title">Welcome, Admin [{{ $adminName }}]</h1>
+    <h1 class="welcome-title">Welcome, {{ $adminName }}</h1>
 
     <div class="section-header">
         <h2 class="section-title">Today's Attendance</h2>

@@ -3,8 +3,8 @@
 @section('title', 'Leave Requests - Tech McRae')
 
 @section('content')
-<script src="{{ asset('script.js') }}"></script>
-@yield('scripts')
+{{-- <script src="{{ asset('script.js') }}"></script>
+@yield('scripts') --}}
 <style>
 /* ======================= LEAVE REQUEST MODALS =======================  */
 .lr-modal-overlay {
@@ -491,6 +491,7 @@
         <div class="filter-actions">
             @if($stats['pending'] > 0)
                 <form action="{{ url('/leave/requests/approve-all') }}" method="POST" style="display:inline; margin:0;">
+                    @csrf
                     <button type="submit" class="approve-all-btn">
                         <span class="material-symbols-rounded">check</span>
                         Approve All Pending <span class="tab-count">{{ $stats['pending'] }}</span>
@@ -669,6 +670,7 @@
         <div class="lr-confirm-icon" id="lrConfirmIcon"><span class="material-symbols-rounded">check</span></div>
         <h2 class="lr-confirm-title" id="lrConfirmTitle">Accept this leave request?</h2>
         <form method="POST" action="" id="leaveConfirmForm">
+            @csrf
             <textarea name="note" class="lr-note-input" id="lrNoteInput" placeholder="Type a note"></textarea>
             <div class="lr-confirm-actions">
                 <button type="submit" class="lr-btn lr-confirm-submit" id="lrConfirmSubmit">
@@ -697,7 +699,7 @@
 @section('scripts')
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-    const base = "/leave/requests";
+    const base = "{{ url('/leave/requests') }}";
 
     const deptColors = {
         engineering: 'var(--red)',
@@ -859,30 +861,34 @@ document.addEventListener('DOMContentLoaded', function () {
         openModal(resultModal);
     }
 
-    // Submit approve/reject via AJAX
     const confirmForm = document.getElementById('leaveConfirmForm');
-    
+
     confirmForm.addEventListener('submit', async function (e) {
         e.preventDefault();
-        
+
         const submitBtn = document.getElementById('lrConfirmSubmit');
         const isApprove = confirmForm.action.endsWith('/approve');
-        
-        // Let the browser package the form natively
-        const formData = new FormData(confirmForm);
+        const formData  = new FormData(confirmForm);
 
         submitBtn.disabled = true;
-        
+
         try {
             const res = await fetch(confirmForm.action, {
                 method: 'POST',
-                credentials: 'same-origin', 
+                credentials: 'same-origin',
                 headers: {
                     'Accept': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest'
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
                 },
-                body: formData 
+                body: formData
             });
+
+            if (res.status === 419) {
+                alert('Your session has expired. The page will reload, please try again.');
+                location.reload();
+                return;
+            }
 
             if (!res.ok) {
                 const text = await res.text();
@@ -893,7 +899,7 @@ document.addEventListener('DOMContentLoaded', function () {
             }
 
             showResult(isApprove ? 'approved' : 'rejected');
-            
+
         } catch (err) {
             console.error('Leave action failed:', err);
             alert('Request error: ' + err.message);
@@ -906,7 +912,6 @@ document.addEventListener('DOMContentLoaded', function () {
         location.reload();
     });
 
-    // Result modal on page load (non-AJAX fallback after redirect)
     if (window.__leaveModalResult) {
         showResult(window.__leaveModalResult === 'approved' ? 'approved' : 'rejected');
     }
