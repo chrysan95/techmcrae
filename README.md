@@ -1,5 +1,5 @@
-<p align="center"><img src="logo.svg" width="400" alt="Tech Mcrae Logo"></a></p>
-<p align="center">Employee Information System built with Laravel. This guide covers **local setup without Docker**.</p>
+<p align="center"><img src="logo.svg" height="200" alt="Tech Mcrae Logo"></a></p>
+<p align="center">Employee Information System (Sistem Informasi Kepegawaian) that took care of employees' attendance and leave requests</p>
 
 ## Overview
 
