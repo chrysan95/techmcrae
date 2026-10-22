@@ -114,48 +114,34 @@ class LeaveRequestController extends Controller
 
     public function status() { return $this->index(request()); }
 
-    public function approve(Request $request, $id) 
+    public function approve(Request $request, $id)
     {
-        try {
-            $data = LeaveRequest::find($id);
-            
-            if ($data) {
-                $data->status = 'Approved';
-                // add a fallback to ID 1 just in case the session is empty
-                $data->admin_id = session('user.employee_id') ?? Auth::id() ?? 1; 
-                $data->admin_notes = $request->input('note');
-                $data->save();
-            }
-    
-            if ($request->ajax()) {
-                return response()->json(['result' => 'approved']);
-            }
-            
-            return redirect()->back()->with('leave_modal', 'approved');
-
-        } catch (\Exception $e) {
-            return response()->json(['error' => 'PHP Crash: ' . $e->getMessage()], 500);
-        }
+        return $this->decide($request, $id, 'Approved', 'approved');
     }
 
-    public function reject(Request $request, $id) 
+    public function reject(Request $request, $id)
+    {
+        return $this->decide($request, $id, 'Rejected', 'rejected');
+    }
+
+    private function decide(Request $request, $id, string $status, string $result)
     {
         try {
             $data = LeaveRequest::find($id);
-            
+
             if ($data) {
-                $data->status = 'Rejected';
-                $data->admin_id = session('user.employee_id') ?? Auth::id() ?? 1;
+                $data->status      = $status;
+                $data->admin_id    = $this->resolveAdminId();
                 $data->admin_notes = $request->input('note');
                 $data->save();
             }
-    
-            if ($request->ajax()) {
-                return response()->json(['result' => 'rejected']);
+
+            if ($request->ajax() || $request->expectsJson()) {
+                return response()->json(['result' => $result]);
             }
-            
-            return redirect()->back()->with('leave_modal', 'rejected');
-            
+
+            return redirect()->back()->with('leave_modal', $result);
+
         } catch (\Exception $e) {
             return response()->json(['error' => 'PHP Crash: ' . $e->getMessage()], 500);
         }
@@ -167,20 +153,19 @@ class LeaveRequestController extends Controller
             'status'   => 'Approved',
             'admin_id' => $this->resolveAdminId(),
         ]);
+
         return back()->with('leave_modal', 'approved')
                      ->with('success', 'All pending leave requests approved successfully.');
     }
 
-    //  Resolve a valid admin employee_id for the admin_id FK column.
-    //  Returns null if we can't find a matching employee, so the
-    //  foreign-key constraint never blocks the save.
     
     private function resolveAdminId()
     {
-        $candidate = session('user.employee_id') ?? session('user.id');
+        $candidate = Auth::user()?->employee_id;
         if ($candidate && Employee::where('employee_id', $candidate)->exists()) {
             return $candidate;
         }
+
         return null;
     }
 }

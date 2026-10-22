@@ -57,8 +57,8 @@
             <span class="material-symbols-rounded">stop</span>
         </button>
     @elseif($clock['state'] === 'day_complete')
-        <div class="clock-circle state-day_complete" title="Shift complete">
-            <span class="material-symbols-rounded">check</span>
+        <div class="clock-circle state-day_complete" title="{{ $clock['met_expected'] ? 'Shift complete' : 'Left before expected out' }}">
+            <span class="material-symbols-rounded">{{ $clock['met_expected'] ? 'check' : 'close' }}</span>
         </div>
     @else
         <button class="clock-circle state-ready_to_clock_in" data-open-modal="clockInModal" title="Clock In">
@@ -83,14 +83,19 @@
             <div class="info-label">EXPECTED OUT</div>
             <div class="info-value">
                 {{ $clock['expected_out'] }}
-                @if($clock['state'] !== 'ready_to_clock_in')
-                    <span class="material-symbols-rounded {{ $clock['state'] === 'day_complete' ? 'eo-ok' : 'eo-no' }}" id="expectedIcon">{{ $clock['state'] === 'day_complete' ? 'check' : 'close' }}</span>
+                @if($clock['state'] === 'clocked_in')
+                    <span class="material-symbols-rounded eo-no" id="expectedIcon">close</span>
+                @elseif($clock['state'] === 'day_complete')
+                    <span class="material-symbols-rounded {{ $clock['met_expected'] ? 'eo-ok' : 'eo-no' }}" id="expectedIcon">{{ $clock['met_expected'] ? 'check' : 'close' }}</span>
                 @endif
             </div>
         </div>
     </div>
 </section>
 
+@if($errors->any())
+    <div class="login-error" style="margin-bottom:12px;">{{ $errors->first() }}</div>
+@endif
 <!-- ======================= MID PANEL ======================= -->
 <section class="mid-panel">
     <!-- Leave status -->

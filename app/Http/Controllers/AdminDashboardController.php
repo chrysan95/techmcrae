@@ -7,13 +7,13 @@ use App\Models\Attendance;
 use App\Models\LeaveRequest;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 
 class AdminDashboardController extends Controller
 {
     public function index(Request $request)
     {
-        $userSession = session('user'); 
-        $adminName = $userSession ? $userSession['name'] : 'Admin'; 
+        $adminName = Auth::user()->name;
 
         // 1. Get the requested period (today, week, month) and reference date
         $period = $request->input('period', 'today');
