@@ -1,4 +1,4 @@
-<p align="center"><img src="logo.svg" height="200" alt="Tech Mcrae Logo"></a></p>
+<p align="center"><img src="logo.svg" height="350" alt="Tech Mcrae Logo"></a></p>
 <p align="center">Employee Information System (Sistem Informasi Kepegawaian) that took care of employees' attendance and leave requests</p>
 
 ## Overview
