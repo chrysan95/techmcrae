@@ -3,8 +3,6 @@
 @section('title', 'Leave Status - Tech McRae')
 
 @section('content')
-<script src="{{ asset('script.js') }}"></script>
-@yield('scripts')
 <div class="leavestatus-page">
 
     {{-- ======================= Header ======================= --}}

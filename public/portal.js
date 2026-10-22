@@ -121,14 +121,69 @@
   const rlDays = $('#rlDays');
   const rlConfirm = $('#rlConfirm');
   const rlError = $('#rlError');
+  
+  const rlCards = Array.from(document.querySelectorAll('#requestLeaveModal .rl-bal'));
 
-  $$('#requestLeaveModal .rl-bal').forEach(card => {
+  function getDays() {
+    if (!rlFrom.value || !rlTo.value) return 0;
+    const diff = Math.round((new Date(rlTo.value) - new Date(rlFrom.value)) / 86400000) + 1;
+    return diff > 0 ? diff : 0;
+  }
+
+  function leaveProblem() {
+    const card = rlCards.find(c => c.classList.contains('selected'));
+    const days = getDays();
+
+    if (rlFrom.value && rlTo.value && new Date(rlTo.value) < new Date(rlFrom.value)) {
+      return 'End date must be on or after the start date.';
+    }
+    if (card && days > parseInt(card.dataset.remaining, 10)) {
+      return `You requested ${days} day(s) but only have ${card.dataset.remaining} day(s) of ${card.dataset.name} Leave left.`;
+    }
+    return '';
+  }
+
+    function showLeaveError(msg) {
+    const txt = $('#errorLeaveText');
+    if (txt) txt.textContent = msg;
+    if (rlError) rlError.textContent = msg;
+    openModal('errorLeaveModal');
+  }
+
+  function refreshLeave() {
+    if (rlDays) rlDays.textContent = getDays();
+    if (rlError) rlError.textContent = leaveProblem();
+  }
+
+  rlCards.forEach(card => {
     card.addEventListener('click', () => {
-      $$('#requestLeaveModal .rl-bal').forEach(c => c.classList.remove('selected'));
+      rlCards.forEach(c => c.classList.remove('selected'));
       card.classList.add('selected');
       if (rlTypeInput) rlTypeInput.value = card.dataset.typeId;
+      refreshLeave();
     });
   });
+
+  const preselected = rlCards.find(c => c.dataset.typeId === (rlTypeInput ? rlTypeInput.value : ''));
+  if (preselected) preselected.classList.add('selected');
+  if (rlDays) rlDays.textContent = getDays();
+
+  [rlFrom, rlTo].forEach(el => el && el.addEventListener('change', refreshLeave));
+
+  const rlForm = $('#requestLeaveForm');
+  if (rlForm) {
+    rlForm.addEventListener('submit', e => {
+      let msg = '';
+      if (!rlTypeInput.value) msg = 'Please select a leave type.';
+      else if (!rlFrom.value || !rlTo.value) msg = 'Please pick both dates.';
+      else msg = leaveProblem();
+
+      if (msg) {
+        e.preventDefault();
+        showLeaveError(msg);
+      }
+    });
+  }
 
   function computeDays() {
     if (!rlFrom || !rlTo || !rlDays) return;
@@ -156,14 +211,19 @@
   // ----------------------------------------------------------
   //  Auto-open success modal after a redirect
   // ----------------------------------------------------------
-  if (CFG.openModal) {
+    if (CFG.openModal) {
     const map = {
       success_clock_in: 'successClockInModal',
       success_clock_out: 'successClockOutModal',
-      success_leave: 'successLeaveModal'
+      success_leave: 'successLeaveModal',
+      request_leave: 'requestLeaveModal'
     };
     const id = map[CFG.openModal];
     if (id) openModal(id);
+  }
+
+  if (CFG.leaveError) {
+    showLeaveError(CFG.leaveError);
   }
 
   // ----------------------------------------------------------

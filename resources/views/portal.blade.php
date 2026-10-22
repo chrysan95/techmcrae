@@ -6,7 +6,7 @@
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>Employee Portal - Tech McRae</title>
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ asset('css/portal.css') }}">
+    <link rel="stylesheet" href="{{ asset('css/portal.css') }}?v={{ filemtime(public_path('css/portal.css')) }}">
 </head>
 <body>
 
@@ -93,9 +93,9 @@
     </div>
 </section>
 
-@if($errors->any())
-    <div class="login-error" style="margin-bottom:12px;">{{ $errors->first() }}</div>
-@endif
+ @if($errors->has('msg'))
+    <div class="login-error" style="margin-bottom:12px;">{{ $errors->first('msg') }}</div>
+ @endif
 <!-- ======================= MID PANEL ======================= -->
 <section class="mid-panel">
     <!-- Leave status -->
@@ -375,10 +375,10 @@
         <div class="rl-title">Request Leave</div>
         <form action="{{ url('/portal/leave-request') }}" method="POST" id="requestLeaveForm">
             @csrf
-            <input type="hidden" name="leave_type_id" id="rlTypeId" value="">
+            <input type="hidden" name="leave_type_id" id="rlTypeId" value="{{ old('leave_type_id') }}">
             <div class="rl-balance-grid">
                 @foreach($balances as $b)
-                <div class="rl-bal b-{{ $b['class'] }}" data-type-id="{{ $b['id'] }}">
+                <div class="rl-bal b-{{ $b['class'] }}" data-type-id="{{ $b['id'] }}" data-remaining="{{ $b['remaining'] }}" data-name="{{ $b['name'] }}">
                     <div class="rl-bal-name c-{{ $b['class'] }}">{{ $b['name'] }} Leave</div>
                     <div class="rl-bal-num c-{{ $b['class'] }}">{{ $b['remaining'] }}<span>/{{ $b['total'] }}d</span></div>
                     <div class="rl-bal-track"><div class="rl-bal-fill f-{{ $b['class'] }}" style="width: {{ $b['pct'] }}%"></div></div>
@@ -389,9 +389,9 @@
             <div class="rl-dates">
                 <div class="rl-date-block">
                     <label>From</label>
-                    <input type="date" name="leave_from" id="rlFrom" value="{{ now('Asia/Jakarta')->toDateString() }}">
+                    <input type="date" name="leave_from" id="rlFrom" value="{{ old('leave_from', now('Asia/Jakarta')->toDateString()) }}">
                     <label>To</label>
-                    <input type="date" name="leave_to" id="rlTo" value="{{ now('Asia/Jakarta')->toDateString() }}">
+                    <input type="date" name="leave_to" id="rlTo" value="{{ old('leave_to', now('Asia/Jakarta')->toDateString()) }}">
                 </div>
                 <div class="rl-days">
                     <div class="lbl">Day(s)</div>
@@ -399,8 +399,8 @@
                 </div>
             </div>
 
-            <textarea class="rl-reason" name="reason" id="rlReason" placeholder="Type a reason"></textarea>
-            <div class="rl-error" id="rlError"></div>
+            <textarea class="rl-reason" name="reason" id="rlReason" placeholder="Type a reason">{{ old('reason') }}</textarea>
+            <div class="rl-error" id="rlError">{{ $errors->first('leave') ?: $errors->first('leave_type_id') ?: $errors->first('leave_from') ?: $errors->first('leave_to') ?: $errors->first('reason') }}</div>
 
             <div class="modal-actions">
                 <button type="button" class="btn-cancel" data-close-modal>Cancel</button>
@@ -442,14 +442,29 @@
     </div>
 </div>
 
+<!-- ERROR: LEAVE -->
+<div class="modal-overlay" id="errorLeaveModal">
+    <div class="modal success-modal">
+        <div class="success-icon red"><span class="material-symbols-rounded">close</span></div>
+        <div class="success-title red">Can't request leave</div>
+        <div class="success-sub" id="errorLeaveText"></div>
+        <button type="button" class="success-btn" data-close-modal>Got it</button>
+    </div>
+</div>
+
+@php
+    $portalLeaveError = $errors->first('leave') ?: $errors->first('leave_type_id') ?: $errors->first('leave_from') ?: $errors->first('leave_to') ?: $errors->first('reason');
+    $portalOpenModal  = session('open_modal') ?? ($portalLeaveError ? 'request_leave' : null);
+@endphp
 <script>
     window.PORTAL = {
         state:           @json($clock['state']),
         checkInEpochMs:  @json($clock['check_in_epoch_ms']),
         expectedEpochMs: @json($clock['expected_epoch_ms']),
-        openModal:       @json(session('open_modal'))
+        openModal:       @json($portalOpenModal),
+        leaveError:      @json($portalLeaveError ?: null)
     };
 </script>
-<script src="{{ asset('portal.js') }}"></script>
+<script src="{{ asset('portal.js') }}?v={{ filemtime(public_path('portal.js')) }}"></script>
 </body>
 </html>

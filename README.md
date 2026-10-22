@@ -17,10 +17,14 @@ Unauthenticated users land on `/` (login overlay). After login, users are redire
 ## Features
 
 ### Authentication
-- Login with **email** or **Employee ID** (`TMCXXXX`), auto-detected via `FILTER_VALIDATE_EMAIL`.
+- Log in with **email** or **Employee ID** (`TMCXXXX`); the type is auto-detected with `FILTER_VALIDATE_EMAIL`.
 - Session-based auth (`Auth::login`) with "remember me" support.
-- Login form rendered as a **CSS overlay** above the dashboard; it fades out after a successful login (`login_success` flash + `@session` check).
-- Role-based access via custom `RoleMiddleware` registered as the `role` alias in `bootstrap/app.php`.
+- The login form is a **CSS overlay** above the dashboard and fades out after a successful login (`login_success` flash + `@session` check).
+- Role-based access through a custom `RoleMiddleware`, registered as the `role` alias in `bootstrap/app.php`.
+- **CSRF protection on every POST route, with no exclusions.** Expired or stale tokens (HTTP 419) are handled gracefully in `bootstrap/app.php`:
+  - AJAX requests get a JSON 419 response and the page reloads with a fresh token.
+  - A stale `/logout` still logs the user out.
+  - Any other form redirects back with a "session expired" message.
 
 ### Admin Workspace
 | Module | Route | Controller | View |
@@ -34,9 +38,18 @@ Unauthenticated users land on `/` (login overlay). After login, users are redire
 | Employees | `GET /employees` | `EmployeeController@index` | `admin/employee.blade.php` |
 | Attendance Records | `GET /attendance/records` | `AttendanceController@index` | `admin/attendance.blade.php` |
 
-- **Dashboard**: stat cards (Employees, WFO, WFH, Absent, On Leave), yearly attendance line chart (this year vs last year), attendance donut chart, period toggle (Today / Week / Month), notifications.
-- **Leave Requests**: three-layer modal system (detail → confirm → result), AJAX approve/reject, leave consumption summary, six color-coded leave types (annual, sick, emergency, maternity, paternity, unpaid). Request IDs use `LR-YYYY-NNNN`.
-- **Leave Status**: 28-day Gantt chart, team on-leave rate bars, striped on-leave table, "returning soon" section.
+- **Dashboard**: a personalised welcome using the logged-in admin's name, plus:
+  - stat cards for Employees, WFO, WFH, Absent and On Leave;
+  - a yearly attendance line chart (this year vs last year) and an attendance donut chart;
+  - a Today / Week / Month period toggle;
+  - notifications.
+- **Leave Requests**:
+  - a three-layer modal system (detail → confirm → result) with AJAX approve/reject;
+  - a leave consumption summary;
+  - six colour-coded leave types: annual, sick, emergency, maternity, paternity and unpaid.
+
+  Request IDs use the format `LR-YYYY-NNNN`. The approving admin's `employee_id` is stored as `admin_id`.
+- **Leave Status**: a 28-day Gantt chart, team on-leave rate bars, a striped on-leave table and a "returning soon" section.
 
 ### Employee Portal
 | Action | Route | Controller |
@@ -47,11 +60,17 @@ Unauthenticated users land on `/` (login overlay). After login, users are redire
 | Request leave | `POST /portal/leave-request` | `EmpPortalController@requestLeave` |
 | Withdraw leave | `POST /portal/leave/{id}/withdraw` | `EmpPortalController@withdrawLeave` |
 
-- Clock-in/out state machine: `ready_to_clock_in` → `clocked_in` → `day_complete` (or `leave_active`).
-- Work location selection (Office / Home).
-- Live clock, live worked-hours timer, expected clock-out indicator.
-- Leave request card selector, leave balance per type (`employee_leave_balances`), request history with withdraw.
-- Standalone layout (does not extend `layouts.app`).
+- **Clock-in/out state machine:** `ready_to_clock_in` → `clocked_in` → `day_complete` (or `leave_active`).
+- **Work location** selection (Office / Home).
+- **Live indicators:** a live clock and a live worked-hours timer. The expected clock-out indicator shows ✕ until the expected time is reached, and stays ✕ if the employee clocked out early.
+- **Leave request rules,** enforced on the server and mirrored in the browser:
+  - **Quota:** requested days can't exceed the remaining quota for that leave type. The quota is calculated as `allocation_limit − (Approved + Pending days)` within the type's reset period (`Monthly` or `Yearly`). Pending requests reserve days, so requests can't be stacked past the limit.
+  - **No overlap:** a new request can't overlap an existing **Pending** or **Approved** request.
+  - **Eligibility:** Maternity is only offered to `F` employees and Paternity only to `M` employees.
+  - **No double submits:** the checks run inside a DB transaction with a row lock, so two quick submissions can't both pass.
+  - **Error feedback:** a violation keeps the form input and shows an inline message plus an error pop-up.
+- **Request history** with withdraw for pending requests.
+- **Standalone layout** (does not extend `layouts.app`).
 
 ---
 
@@ -59,12 +78,14 @@ Unauthenticated users land on `/` (login overlay). After login, users are redire
 
 | Layer | Technology |
 |---|---|
-| Backend | PHP 8.2+, Laravel 11/12 (uses `bootstrap/app.php` `Application::configure()` style) |
-| Database | MySQL 8 (Eloquent ORM + Query Builder) |
+| Backend | PHP 8.3 (8.2+ supported), Laravel 12 (`bootstrap/app.php` `Application::configure()` style) |
+| Database | MariaDB 10.11 in Docker (MySQL 8 / MariaDB 10.6+ for non-Docker) |
+| Web server | Apache 2.4 + `mod_php` (Docker image `php:8.3-apache`) |
+| Containers | Docker, Docker Compose v2 |
 | Templating | Blade |
-| Styling | Bootstrap 5.3.8 (local, `public/bootstrap/`), custom CSS with CSS custom properties |
-| Fonts / Icons | Google Fonts — **Alfa Slab One** (headings), **Poppins** (body); **Material Symbols Rounded** |
-| Charts | **Chart.js** (via jsDelivr CDN) |
+| Styling | Custom CSS with CSS custom properties (no CSS framework) |
+| Fonts / Icons | Google Fonts: **Alfa Slab One** (headings), **Poppins** (body); **Material Symbols Rounded** (icons) |
+| Charts | **Chart.js** (jsDelivr CDN) |
 | Client JS | Vanilla JavaScript (`fetch()`, `Intl.DateTimeFormat`, `setInterval`) |
 | Timezone | `Asia/Jakarta` (WIB) |
 
@@ -90,7 +111,7 @@ All charts on the admin dashboard use **Chart.js**, loaded in `resources/views/l
 - Legend rendered from server HTML (`pieData.html_legend`).
 
 ### 3. Leave Status Visuals (HTML/CSS, no chart library)
-- **28-day Gantt chart**: leave ranges drawn as colored bars per employee, color mapped per leave type.
+- **28-day Gantt chart** — leave ranges drawn as colored bars per employee, color mapped per leave type.
 - **Team on-leave rate bars** — percentage bars per department.
 
 ### Layout note
@@ -164,11 +185,16 @@ tech-mcrae/
 │       ├── Employee.php
 │       ├── Attendance.php
 │       ├── LeaveRequest.php
-│       └── LeaveType.php
+│       ├── LeaveType.php
+│       └── LeaveBalance.php
 ├── bootstrap/
-│   └── app.php                  # middleware alias
+│   └── app.php                  # middleware alias + 419 (CSRF) handler
+├── docker/
+│   ├── entrypoint.sh
+│   ├── apache/000-default.conf
+│   ├── php/php.ini
+│   └── mysql/init/              # SQL dump (git-ignored)
 ├── public/
-│   ├── bootstrap/bootstrap-5.3.8-dist/
 │   ├── css/
 │   │   ├── style.css
 │   │   ├── style2.css
@@ -176,7 +202,7 @@ tech-mcrae/
 │   │   └── portal.css
 │   ├── logo.svg
 │   ├── script.js                # sidebar, dropdowns (admin layout)
-│   └── portal.js                # live clock, timers, portal modals
+│   └── portal.js                # live clock, timers, portal modals, leave validation
 ├── resources/views/
 │   ├── layouts/app.blade.php
 │   ├── auth/guest_entry.blade.php
@@ -187,7 +213,12 @@ tech-mcrae/
 │   │   ├── employee.blade.php
 │   │   └── attendance.blade.php
 │   └── portal.blade.php
-└── routes/web.php
+├── routes/web.php
+├── Dockerfile
+├── docker-compose.yml
+├── .dockerignore
+├── .env.docker.example
+└── .env.db.example
 ```
 
 ---
@@ -223,87 +254,73 @@ Main tables used by the controllers:
 - Composer 2.x
 - MySQL 8.x (or MariaDB 10.6+)
 - Git
-- Optional: XAMPP / Laragon (Windows) — bundles PHP + MySQL
 
 ---
 
-## Installation
+## Running with Docker
 
-### 1. Clone the repository
+### What runs
+
+| Service | Image | URL / Port | Purpose |
+|---|---|---|---|
+| `app` | built from `Dockerfile` | http://localhost:8080 | Laravel on Apache + PHP 8.3 |
+| `db` | `mariadb:10.11` | `localhost:3307` | Database |
+| `phpmyadmin` | `phpmyadmin:5` | http://localhost:8081 | Database GUI |
+
+### Docker files
+
+```
+tech-mcrae/
+├── Dockerfile                    # Multi-stage build: Composer stage → php:8.3-apache runtime
+├── docker-compose.yml            # app + db + phpmyadmin, volumes, healthcheck
+├── .dockerignore                 # Keeps vendor/, .env, caches, logs out of the image
+├── .env.docker.example           # Laravel config template for the container
+├── .env.db.example               # MariaDB credentials template
+└── docker/
+    ├── entrypoint.sh             # Runs on every container start (see below)
+    ├── apache/000-default.conf   # Apache vhost: DocumentRoot = public/, AllowOverride All
+    ├── php/php.ini               # PHP overrides (copied to conf.d/zz-app.ini)
+    └── mysql/init/               # Put your .sql dump here; auto-imported on first start
+```
+
+### Steps
+
+**1. Install Docker Desktop** (Windows: enable the WSL 2 backend).
+
+```bash
+docker --version
+docker compose version
+```
+
+**2. Clone the repository and create the env files**
+
 ```bash
 gh repo clone chrysan95/techmcrae
-cd tech-mcrae
+cd techmcrae
+cp .env.docker.example .env.docker
+cp .env.db.example .env.db
 ```
 
-### 2. Install PHP dependencies
+**3. Add the database dump**
+
+Export your database to `docker/mysql/init/01-techmcrae.sql`, for example from phpMyAdmin with **Export → Quick → SQL**. Remove any `CREATE DATABASE` or `USE` lines; the container creates and selects `techmcrae` itself.
+
+**4. Build and start**
+
 ```bash
-composer install
+docker compose up -d --build
+docker compose logs -f app      # wait for "Database is up."
 ```
 
-### 3. Create the environment file
-```bash
-cp .env.example .env
-php artisan key:generate
-```
+**5. Open the app**
 
-### 4. Configure `.env`
-```env
-APP_NAME="Tech McRae"
-APP_ENV=local
-APP_DEBUG=true
-APP_URL=http://localhost:8000
-APP_TIMEZONE=Asia/Jakarta
+| What | Where |
+|---|---|
+| App | http://localhost:8080 |
+| phpMyAdmin | http://localhost:8081 (user/password from `.env.db`) |
+| HeidiSQL / DBeaver | host `localhost`, port `3307` |
 
-DB_CONNECTION=mysql
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_DATABASE=techmcrae
-DB_USERNAME=root
-DB_PASSWORD=
-
-SESSION_DRIVER=database
-```
-
-> If your Laravel version does not read `APP_TIMEZONE`, set `'timezone' => 'Asia/Jakarta'` in `config/app.php`.
-
-### 5. Create the database
-```sql
-CREATE DATABASE techmcrae;
-```
-
-### 6. Run migrations and seeders
-```bash
-php artisan migrate
-php artisan db:seed
-```
-Or import an existing SQL dump:
-```bash
-mysql -u root -p tech_mcrae < database/tech_mcrae.sql
-```
-
-### 7. Place front-end assets
-Ensure these exist under `public/`:
-```
-public/bootstrap/bootstrap-5.3.8-dist/css/bootstrap.min.css
-public/css/style.css
-public/css/style2.css
-public/css/style3.css
-public/css/portal.css
-public/script.js
-public/portal.js
-public/logo.svg
-```
-
-### 8. Clear caches
-```bash
-php artisan optimize:clear
-```
-
-### 9. Run the development server
-```bash
-php artisan serve
-```
-Open **http://localhost:8000**
+Always use the same host (`localhost:8080`, not `127.0.0.1:8080`). Cookies are per host, and switching hosts causes CSRF mismatches.
 
 ---
 
@@ -315,17 +332,6 @@ Log in with either the **email** or **Employee ID** of a seeded record:
 |---|---|---|---|
 | Admin | `TMC0001` / admin email | as seeded | `/dashboard` |
 | Employee | `TMC0002` / employee email | as seeded | `/portal` |
-
----
-
-## Useful Commands
-
-```bash
-php artisan route:list          # list all routes
-php artisan migrate:fresh --seed # reset database
-php artisan optimize:clear      # clear config/route/view cache
-php artisan tinker              # interactive shell
-```
 
 ---
 
@@ -344,15 +350,32 @@ php artisan tinker              # interactive shell
 ## Known Limitations
 
 - **Plaintext password check**: `AuthController@login` compares `password` directly in the query. Replace with `Hash::check()` and store hashed passwords before production.
-- **No server-side pagination**: tables use `->get()` and filter client-side; large datasets will slow down.
+- **No server-side pagination**: tables use `->get()` and filter client-side; large datasets will slow down. This was done only for testing only because we only had a small dummy dataset.
 - **Chart.js loaded unpinned from CDN**: pin a version (e.g. `chart.js@4.4.1`) for reproducible builds; requires internet access in the browser.
 - **No WebSockets**: real-time updates are client-side timers/AJAX, not pushed from the server.
 
 ---
 
-## License
+## Stylesheets
 
-For educational purposes. 
+| File | Loaded by | Covers |
+|---|---|---|
+| `bootstrap.min.css` | `layouts/app.blade.php` (line 9) | Bootstrap 5.3.8 base utilities and pagination styling |
+| `style2.css` | `layouts/app.blade.php` (line 10) | Main content layout, admin dashboard, stat cards, dashboard grid, Chart.js overflow fixes, notifications panel, responsive breakpoints |
+| `style.css` | `layouts/app.blade.php` (line 11) | Global reset, Poppins font, sidebar, sidebar nav and dropdown menus |
+| `style3.css` | `layouts/app.blade.php` (line 12) | Login overlay, generic records pages (Employee, Attendance, Leave Requests), data tables, pills/badges, empty states, leave summary panel, leave request modals (detail → confirm → result), Leave Status page (Gantt, on-leave bars, returning soon) |
+| `portal.css` | `portal.blade.php` (line 9) | Employee portal only: standalone, does not use the shared layout or any of the files above |
+
+**Load order (admin pages):** `bootstrap.min.css` → `style2.css` → `style.css` → `style3.css` → `@yield('styles')`.
+Later files override earlier ones, so page-specific rules belong in `style3.css` or a new file pushed via `@section('styles')`, without editing shared rules.
+
+**Fonts:** Alfa Slab One (headings), Poppins (body), and Material Symbols Rounded (icons) load from Google Fonts in `layouts/app.blade.php` (lines 13–14). The portal loads its own copies plus the local `Redotic.ttf`.
+
+---
+
+## Explanation
+
+This project is a university assignment turned into a personal project. After the assignment is done I then took matter into my own hands to fix mistakes I made and make it better while learning more about Docker. 
 
 ---
 

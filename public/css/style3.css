@@ -1613,3 +1613,37 @@
     .leave-summary-panel { grid-template-columns: 1fr; }
     .page-title { font-size: 2rem; }
 }
+
+/* ================================
+   WIDE SCREENS
+   ================================ */
+.dashboard-page,
+.records-page,
+.leavestatus-page {
+  width: 100%;
+  max-width: 1600px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+@media (min-width: 1920px) {
+  .main-content {
+    padding: 48px 72px;
+  }
+  .dashboard-page,
+  .records-page,
+  .leavestatus-page {
+    max-width: 1840px;
+  }
+}
+
+@media (min-width: 2400px) {
+  .main-content {
+    padding: 56px 96px;
+  }
+  .dashboard-page,
+  .records-page,
+  .leavestatus-page {
+    max-width: 2200px;
+  }
+}

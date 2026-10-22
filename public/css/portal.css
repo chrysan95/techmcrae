@@ -1359,3 +1359,21 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+.success-icon.red {
+  background: var(--red);
+  color: var(--white);
+}
+
+.success-title.red {
+  color: var(--red);
+}
+
+.rl-error {
+  font-weight: 600;
+  min-height: 1.2em;
+}
+
+.rl-error:empty {
+  display: none;
+}

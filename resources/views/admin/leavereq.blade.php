@@ -3,8 +3,6 @@
 @section('title', 'Leave Requests - Tech McRae')
 
 @section('content')
-{{-- <script src="{{ asset('script.js') }}"></script>
-@yield('scripts') --}}
 <style>
 /* ======================= LEAVE REQUEST MODALS =======================  */
 .lr-modal-overlay {

@@ -22,6 +22,45 @@ class EmpPortalController extends Controller
         'Paternity' => 'paternity', 'Emergency' => 'emergency', 'Unpaid' => 'unpaid',
     ];
 
+     private function typeAllowed(int $typeId, $employee): bool
+    {
+        $gender = strtolower($employee->gender ?? '');
+
+        if ($typeId === 3) return $gender === 'f';
+        if ($typeId === 4) return $gender === 'm';
+
+        return true;
+    }
+
+    private function leavePeriod(LeaveType $type, Carbon $date): array
+    {
+        return $type->reset_frequency === 'Monthly'
+            ? [$date->copy()->startOfMonth(), $date->copy()->endOfMonth()]
+            : [$date->copy()->startOfYear(), $date->copy()->endOfYear()];
+    }
+
+    // quota = allocation_limit − (approved + pending days) inside the reset period
+    // pending requests reserve days, so an employee cant stack requests
+    private function leaveBalance(string $employeeId, LeaveType $type, Carbon $date): array
+    {
+        [$start, $end] = $this->leavePeriod($type, $date);
+
+        $base = LeaveRequest::where('employee_id', $employeeId)
+            ->where('leave_type_id', $type->leave_type_id)
+            ->whereBetween('leave_from', [$start->toDateString(), $end->toDateString()]);
+
+        $approved = (int) (clone $base)->where('status', 'Approved')->sum('leave_days');
+        $pending  = (int) (clone $base)->where('status', 'Pending')->sum('leave_days');
+        $total    = (int) ($type->allocation_limit ?? 0);
+
+        return [
+            'total'     => $total,
+            'approved'  => $approved,
+            'pending'   => $pending,
+            'available' => max($total - $approved - $pending, 0),
+        ];
+    }
+
     public function index()
     {
         $employee = Auth::user();
@@ -156,11 +195,11 @@ class EmpPortalController extends Controller
         }
 
         // ============================================================
-        //  LEAVE BALANCES (Filtered by Gender)
+        //  LEAVE BALANCES (Filtered by Gender & Custom Rules)
         // ============================================================
         $leaveTypes = LeaveType::all();
         $balances   = [];
-        
+
         $gender   = strtolower($employee->gender ?? ''); 
         $isMale   = in_array($gender, ['m']);
         $isFemale = in_array($gender, ['f']);
@@ -168,34 +207,25 @@ class EmpPortalController extends Controller
         foreach ($leaveTypes as $lt) {
             $tid = (int) $lt->leave_type_id;
 
-            // Only show Maternity if F, Paternity if M.
-            // If gender is null or unrecognized, both are hidden.
+            // only show Maternity if F, Paternity if M both hidden if null/unrecognized
             if ($tid === 3 && !$isFemale) continue;
             if ($tid === 4 && !$isMale) continue;
 
-            $total = (int) ($lt->allocation_limit ?? 0);
+            if (!$this->typeAllowed($tid, $employee)) continue;
 
-            $remaining = DB::table('employee_leave_balances')
-                ->where('employee_id', $employee->employee_id)
-                ->where('leave_type_id', $tid)
-                ->value('remaining');
-
-            if ($remaining === null) {
-                $used = LeaveRequest::where('employee_id', $employee->employee_id)
-                    ->where('leave_type_id', $tid)
-                    ->where('status', 'Approved')->sum('leave_days');
-                $remaining = max($total - $used, 0);
-            }
-
+            // 3. Get leave balances
+            // Ensure $now is defined in your method scope ($now = Carbon::now())
+            $bal = $this->leaveBalance($employee->employee_id, $lt, $now);
+            
             $name = $this->typeMap[$tid] ?? trim(str_ireplace('Leave', '', $lt->leave_name ?? 'Other'));
 
             $balances[$tid] = [
                 'id'        => $tid,
                 'name'      => $name,
-                'remaining' => (int) $remaining,
-                'total'     => $total,
+                'remaining' => $bal['available'],
+                'total'     => $bal['total'],
                 'class'     => $this->colorMap[$name] ?? 'annual',
-                'pct'       => $total > 0 ? min(($remaining / $total) * 100, 100) : 0,
+                'pct'       => $bal['total'] > 0 ? min(($bal['available'] / $bal['total']) * 100, 100) : 0,
             ];
         }
 
@@ -287,31 +317,78 @@ class EmpPortalController extends Controller
     // ================================================================
     //  REQUEST LEAVE
     // ================================================================
-    public function requestLeave(Request $request)
+        public function requestLeave(Request $request)
     {
         $data = $request->validate([
-            'leave_type_id' => 'required|integer',
+            'leave_type_id' => 'required|integer|exists:leave_types,leave_type_id',
             'leave_from'    => 'required|date',
             'leave_to'      => 'required|date|after_or_equal:leave_from',
             'reason'        => 'nullable|string|max:500',
+        ], [
+            'leave_type_id.required' => 'Please select a leave type.',
+            'leave_to.after_or_equal' => 'End date must be on or after the start date.',
         ]);
 
-        $from = Carbon::parse($data['leave_from']);
-        $to   = Carbon::parse($data['leave_to']);
+        $employee = Auth::user();
+        $type     = LeaveType::findOrFail($data['leave_type_id']);
+        $typeId   = (int) $type->leave_type_id;
+        $typeName = $this->typeMap[$typeId] ?? $type->leave_name;
+
+        $from = Carbon::parse($data['leave_from'], 'Asia/Jakarta')->startOfDay();
+        $to   = Carbon::parse($data['leave_to'], 'Asia/Jakarta')->startOfDay();
         $days = $from->diffInDays($to) + 1;
 
-        LeaveRequest::create([
-            'employee_id'   => Auth::user()->employee_id,
-            'leave_type_id' => $data['leave_type_id'],
-            'leave_from'    => $from->toDateString(),
-            'leave_to'      => $to->toDateString(),
-            'leave_days'    => $days,
-            'reason'        => $data['reason'] ?? null,
-            'status'        => 'Pending',
-            'requested_at'  => Carbon::now('Asia/Jakarta'),
-        ]);
+        $fail = fn (string $msg) => back()->withErrors(['leave' => $msg])->withInput();
 
-        return back()->with('open_modal', 'success_leave');
+        if (!$this->typeAllowed($typeId, $employee)) {
+            return $fail("You are not eligible for {$typeName} Leave.");
+        }
+
+        return DB::transaction(function () use ($employee, $type, $typeId, $typeName, $from, $to, $days, $data, $fail) {
+            // Lock this employee's row so two quick submits can't both pass the checks
+            Employee::where('employee_id', $employee->employee_id)->lockForUpdate()->first();
+
+            // 1. No overlap with an existing Pending / Approved request
+            $overlap = LeaveRequest::where('employee_id', $employee->employee_id)
+                ->whereIn('status', ['Pending', 'Approved'])
+                ->whereDate('leave_from', '<=', $to->toDateString())
+                ->whereDate('leave_to', '>=', $from->toDateString())
+                ->orderBy('leave_from')
+                ->first();
+
+            if ($overlap) {
+                $label = $overlap->status === 'Approved' ? 'an approved' : 'a pending';
+                return $fail(sprintf(
+                    'You already have %s leave from %s to %s that overlaps these dates.',
+                    $label,
+                    Carbon::parse($overlap->leave_from)->format('d M Y'),
+                    Carbon::parse($overlap->leave_to)->format('d M Y')
+                ));
+            }
+
+            // 2. Requested days must fit the remaining quota for that period
+            $bal = $this->leaveBalance($employee->employee_id, $type, $from);
+
+            if ($days > $bal['available']) {
+                $period = $type->reset_frequency === 'Monthly' ? $from->format('F Y') : $from->format('Y');
+                $msg = "You requested {$days} day(s) but only have {$bal['available']} day(s) of {$typeName} Leave left for {$period}";
+                $msg .= $bal['pending'] > 0 ? " ({$bal['pending']} day(s) already pending)." : '.';
+                return $fail($msg);
+            }
+
+            LeaveRequest::create([
+                'employee_id'   => $employee->employee_id,
+                'leave_type_id' => $typeId,
+                'leave_from'    => $from->toDateString(),
+                'leave_to'      => $to->toDateString(),
+                'leave_days'    => $days,
+                'reason'        => $data['reason'] ?? null,
+                'status'        => 'Pending',
+                'requested_at'  => Carbon::now('Asia/Jakarta'),
+            ]);
+
+            return back()->with('open_modal', 'success_leave');
+        });
     }
 
     // ================================================================

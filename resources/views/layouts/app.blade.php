@@ -6,15 +6,12 @@
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>@yield('title', 'Sistem Informasi Kepegawaian - Tech McRae')</title>
     <link rel="icon" href="{{ asset('logo.svg') }}">
-    <link rel="stylesheet" href="{{ asset('\bootstrap\bootstrap-5.3.8-dist\css\bootstrap.min.css') }}">
-    <link rel="stylesheet" href="{{ asset('css/style2.css') }}">
-    <link rel="stylesheet" href="{{ asset('css/style.css') }}">
-    <link rel="stylesheet" href="{{ asset('css/style3.css') }}">
+    <link rel="stylesheet" href="{{ asset('css/style2.css') }}?v={{ filemtime(public_path('css/style2.css')) }}">
+    <link rel="stylesheet" href="{{ asset('css/style.css') }}?v={{ filemtime(public_path('css/style.css')) }}">
+    <link rel="stylesheet" href="{{ asset('css/style3.css') }}?v={{ filemtime(public_path('css/style3.css')) }}">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0" />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Poppins:wght@400;500;600;700&display=swap">
     @yield('styles')
-    <script src="{{ asset('script.js') }}"></script>
-    @yield('scripts')
 </head>
 <body>
     <button class="sidebar-menu-button">
@@ -148,10 +145,9 @@
         @endif
     @endauth
 
-    <script src="{{ asset('script.js') }}"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="{{ asset('script.js') }}"></script>
     <script>
-        // Password toggle
         document.querySelector('.toggle-password')?.addEventListener('click', function () {
             const pw = document.getElementById('password');
             const icon = this.querySelector('.material-symbols-rounded');
@@ -159,6 +155,6 @@
             else { pw.type = 'password'; icon.textContent = 'visibility'; }
         });
     </script>
-    @yield('scripts') 
+    @yield('scripts')
 </body>
 </html>
