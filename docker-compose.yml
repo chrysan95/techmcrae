@@ -1,50 +1,59 @@
-name: techmcrae
-
 services:
   app:
     build: .
+    image: techmcrae-app:1.0
     container_name: techmcrae-app
     env_file: .env.docker
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      LOG_CHANNEL: stderr
     ports:
       - "8080:80"
     volumes:
-      - storage:/var/www/html/storage
+      - app_storage:/var/www/html/storage
     depends_on:
       db:
         condition: service_healthy
+    networks: [backend]
     restart: unless-stopped
 
   db:
     image: mariadb:10.11
     container_name: techmcrae-db
-    env_file: .env.db
     environment:
-      TZ: Asia/Jakarta
-    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --default-time-zone=+07:00
-    ports:
-      - "3307:3306"
+      MARIADB_DATABASE: ${DB_DATABASE}
+      MARIADB_USER: ${DB_USERNAME}
+      MARIADB_PASSWORD: ${DB_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
     volumes:
-      - dbdata:/var/lib/mysql
+      - db_data:/var/lib/mysql
       - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 5s
       timeout: 5s
-      retries: 20
+      retries: 30
+    networks: [backend]
     restart: unless-stopped
 
-  phpmyadmin:
-    image: phpmyadmin:5
-    container_name: techmcrae-pma
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: techmcrae-ngrok
+    profiles: ["tunnel"]
+    command: http app:80
     environment:
-      PMA_HOST: db
-      PMA_PORT: 3306
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
     ports:
-      - "8081:80"
+      - "4040:4040"
     depends_on:
-      - db
-    restart: unless-stopped
+      app:
+        condition: service_healthy
+    networks: [backend]
+
+networks:
+  backend:
 
 volumes:
-  dbdata:
-  storage:
+  db_data:
+  app_storage:

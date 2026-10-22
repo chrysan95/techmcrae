@@ -214,6 +214,8 @@ tech-mcrae/
 │   │   └── attendance.blade.php
 │   └── portal.blade.php
 ├── routes/web.php
+├── tests/Feature/                # PHPUnit feature tests (run by CI)
+├── .github/workflows/ci.yml      # GitHub Actions: unit-tests + docker-e2e
 ├── Dockerfile
 ├── docker-compose.yml
 ├── .dockerignore
@@ -263,21 +265,22 @@ Main tables used by the controllers:
 
 | Service | Image | URL / Port | Purpose |
 |---|---|---|---|
-| `app` | built from `Dockerfile` | http://localhost:8080 | Laravel on Apache + PHP 8.3 |
-| `db` | `mariadb:10.11` | `localhost:3307` | Database |
-| `phpmyadmin` | `phpmyadmin:5` | http://localhost:8081 | Database GUI |
+| `app` | built from `Dockerfile` (tagged `techmcrae-app:1.0`) | http://localhost:8080 | Laravel on Apache + PHP 8.3 |
+| `db` | `mariadb:10.11` | internal only (`db:3306`) | Database |
+| `ngrok` | `ngrok/ngrok:latest` | http://localhost:4040 (inspector) | Public HTTPS tunnel. Only starts with `--profile tunnel` (see [Sharing the App with ngrok](#sharing-the-app-with-ngrok)) |
+
+All services share a private `backend` network. The database port is not published to the host.
 
 ### Docker files
 
 ```
 tech-mcrae/
-├── Dockerfile                    # Multi-stage build: Composer stage → php:8.3-apache runtime
-├── docker-compose.yml            # app + db + phpmyadmin, volumes, healthcheck
+├── Dockerfile                    # Multi-stage build: Composer stage → php:8.3-apache runtime, HEALTHCHECK on /health
+├── docker-compose.yml            # app + db + ngrok (optional), volumes, healthchecks
 ├── .dockerignore                 # Keeps vendor/, .env, caches, logs out of the image
-├── .env.docker.example           # Laravel config template for the container
-├── .env.db.example               # MariaDB credentials template
+├── .env.docker.example           # Template for app config, DB credentials and ngrok token
 └── docker/
-    ├── entrypoint.sh             # Runs on every container start (see below)
+    ├── entrypoint.sh             # Runs on every container start
     ├── apache/000-default.conf   # Apache vhost: DocumentRoot = public/, AllowOverride All
     ├── php/php.ini               # PHP overrides (copied to conf.d/zz-app.ini)
     └── mysql/init/               # Put your .sql dump here; auto-imported on first start
@@ -292,35 +295,191 @@ docker --version
 docker compose version
 ```
 
-**2. Clone the repository and create the env files**
+**2. Clone the repository and create the env file**
 
 ```bash
 gh repo clone chrysan95/techmcrae
 cd techmcrae
 cp .env.docker.example .env.docker
-cp .env.db.example .env.db
 ```
+
+Edit `.env.docker` and set at least `DB_PASSWORD` and `DB_ROOT_PASSWORD`. All configuration lives in this one file: Laravel settings, the database credentials MariaDB is created with, and the ngrok token.
 
 **3. Add the database dump**
 
-Export your database to `docker/mysql/init/01-techmcrae.sql`, for example from phpMyAdmin with **Export → Quick → SQL**. Remove any `CREATE DATABASE` or `USE` lines; the container creates and selects `techmcrae` itself.
+Export your database to `docker/mysql/init/` as a `.sql` file, for example from phpMyAdmin with **Export → Quick → SQL**. Remove any `CREATE DATABASE` or `USE` lines; the container creates and selects the database itself. The dump is only imported the first time the `db_data` volume is created. To re-import, run `docker compose --env-file .env.docker down -v` (this deletes all database data).
 
 **4. Build and start**
 
 ```bash
-docker compose up -d --build
+docker compose --env-file .env.docker up -d --build
 docker compose logs -f app      # wait for "Database is up."
 ```
+
+Always pass `--env-file .env.docker`. Docker Compose fills in `${...}` values in `docker-compose.yml` (DB credentials, `NGROK_AUTHTOKEN`) from `.env` by default, not from `.env.docker`. Without the flag, MariaDB gets created with your local XAMPP `.env` values or with blank ones.
 
 **5. Open the app**
 
 | What | Where |
 |---|---|
 | App | http://localhost:8080 |
-| phpMyAdmin | http://localhost:8081 (user/password from `.env.db`) |
-| HeidiSQL / DBeaver | host `localhost`, port `3307` |
 
 Always use the same host (`localhost:8080`, not `127.0.0.1:8080`). Cookies are per host, and switching hosts causes CSRF mismatches.
+
+---
+
+## Sharing the App with ngrok
+
+[ngrok](https://ngrok.com) gives your local container a public HTTPS URL, so friends or testers can open the app from anywhere without deploying it. The tunnel runs as the optional `ngrok` service in `docker-compose.yml`.
+
+### How it works
+
+```
+Friend's browser ──HTTPS──▶ ngrok cloud ──tunnel──▶ techmcrae-ngrok container ──HTTP──▶ app:80
+```
+
+ngrok handles HTTPS and forwards plain HTTP to the `app` container over the internal `backend` network. It sends the original scheme and host in the `X-Forwarded-*` headers.
+
+### Steps
+
+**1. Get an authtoken**
+
+Sign up at https://ngrok.com (free), then copy your token from https://dashboard.ngrok.com/get-started/your-authtoken. Put it in `.env.docker`:
+
+```
+NGROK_AUTHTOKEN=your_token_here
+```
+
+**2. Start the stack with the tunnel profile**
+
+```bash
+docker compose --env-file .env.docker --profile tunnel up -d --build
+```
+
+`--profile tunnel` turns on the `ngrok` service. ngrok waits until `app` reports healthy.
+
+**3. Get the public URL**
+
+Open the ngrok inspector at http://localhost:4040. It shows the URL and every request that goes through the tunnel. Or run:
+
+```bash
+curl -s http://localhost:4040/api/tunnels
+```
+
+The URL looks like `https://something-random.ngrok-free.dev`. Share that link.
+
+**4. Stop sharing**
+
+```bash
+docker compose stop ngrok
+```
+
+The app keeps running locally; only the public URL goes offline.
+
+### Code change required for ngrok: trusted proxies
+
+`bootstrap/app.php` now trusts proxy headers:
+
+```php
+->withMiddleware(function (Middleware $middleware): void {
+    $middleware->trustProxies(at: '*');
+    // ...
+})
+```
+
+**Why:** the request reaches Laravel as plain HTTP from the ngrok container. Without this line, Laravel ignores `X-Forwarded-Proto: https` and builds every `asset()`, `url()` and form `action` as `http://...`. The browser loads the page over HTTPS, so it blocks those links as mixed content: CSS and JS don't load and forms don't submit. With the proxy trusted, Laravel builds `https://<ngrok-host>/...` links.
+
+`at: '*'` trusts any proxy. That's fine here because only ngrok sits in front of the app. On a real server, restrict it to your load balancer's IP.
+
+### Notes and limitations (free plan)
+
+- **The URL changes every time the ngrok container restarts.** To keep one fixed address, claim the free static domain in the ngrok dashboard (**Domains**) and change the service command to `http --url=your-name.ngrok-free.dev app:80`.
+- **Visitors see an ngrok warning page** on their first visit and must click **Visit Site**.
+- **Your machine must stay on**, with Docker running, while others use the link.
+- **Anyone with the link can reach the login page.** Share it only with people you trust, and stop the tunnel when you're done. All seeded accounts use the default password `password` (see [Known Limitations](#known-limitations)), so change them first.
+- Leave `APP_URL` as `http://localhost:8080`. Laravel builds links from the incoming request's host, so you don't need to change it for each new tunnel URL.
+
+### Without Docker (XAMPP / `php artisan serve`)
+
+Install ngrok from https://ngrok.com/download, then:
+
+```bash
+ngrok config add-authtoken <your_token>
+ngrok http 80      # Apache/XAMPP serving the app
+ngrok http 8000    # or: php artisan serve
+```
+
+The `trustProxies` change above is needed here too.
+
+---
+
+## Automated Testing (GitHub Actions)
+
+Every push to `main` and every pull request runs the workflow in `.github/workflows/ci.yml`. Results show up in the repository's **Actions** tab and as a ✔ / ✘ next to each commit and PR.
+
+### What the workflow does
+
+The workflow has two jobs. `docker-e2e` only runs if `unit-tests` passes.
+
+**1. `unit-tests`: PHPUnit feature tests against a real MariaDB**
+
+- Starts a `mariadb:10.11` service container, installs PHP 8.3 and Composer dependencies.
+- Imports every `.sql` file in `docker/mysql/init/`, the same dump Docker uses, so tests run on the real seeded data.
+- Runs `php artisan test` and uploads the results as the `phpunit-report` artifact (`junit.xml`).
+
+| Test file | What it checks |
+|---|---|
+| `tests/Feature/AuthTest.php` | Passwords are stored hashed; login with Employee ID or email; admins go to `/dashboard`; wrong or empty credentials are rejected |
+| `tests/Feature/AccessIsolationTest.php` | An employee can't withdraw or see another employee's leave; employees get 403 on admin pages; guests are redirected to login |
+| `tests/Feature/LeaveValidationTest.php` | End date before start date, unknown leave type, and maternity leave for male employees are rejected; a valid request is created |
+| `tests/Feature/HealthTest.php` | `/health` returns `{"status":"ok","db":"up"}` |
+
+Tests use `DatabaseTransactions`, so every row a test creates is rolled back afterwards.
+
+**2. `docker-e2e`: the full Docker stack, end to end**
+
+Builds the image and starts `app` + `db` with `docker compose up --wait`, then checks:
+
+| Step | Passes when |
+|---|---|
+| Health check | `GET http://localhost:8080/health` succeeds |
+| Passwords hashed by init SQL | No row in `employees` has a non-bcrypt password |
+| Persistence | A row inserted before `docker compose down` / `up` is still there afterwards (the `db_data` volume works) |
+| Fault injection and recovery | With `db` stopped, `/health` returns **503**; after `db` restarts, `/health` recovers within 60 s |
+
+Container logs are uploaded as the `compose-logs` artifact, even when a step fails.
+
+### Viewing results
+
+1. Open the repository on GitHub and go to **Actions → CI**.
+2. Click a run to see each job and step. A failing step's log is expanded automatically.
+3. Download `phpunit-report` or `compose-logs` from the **Artifacts** section at the bottom of the run page.
+
+You can also run the workflow by hand from the Actions tab if you add `workflow_dispatch:` under `on:` in `ci.yml`.
+
+### Running the tests locally
+
+`phpunit.xml` defaults to an in-memory SQLite database, which doesn't have this project's tables, because the schema comes from the SQL dump, not from migrations. Run the tests against a throwaway MariaDB container instead (PowerShell):
+
+```powershell
+# 1. Start a disposable MariaDB with the dump imported (port 3310 so it doesn't clash with XAMPP)
+docker run -d --rm --name techmcrae-test -e MARIADB_DATABASE=techmcrae -e MARIADB_ROOT_PASSWORD=root `
+  -p 3310:3306 -v "${PWD}/docker/mysql/init:/docker-entrypoint-initdb.d:ro" mariadb:10.11
+
+# 2. Wait ~15 seconds for the import, then run the tests
+$env:DB_CONNECTION="mysql"; $env:DB_HOST="127.0.0.1"; $env:DB_PORT="3310"
+$env:DB_DATABASE="techmcrae"; $env:DB_USERNAME="root"; $env:DB_PASSWORD="root"
+php artisan test
+
+# 3. Remove the container (--rm deletes it on stop)
+docker stop techmcrae-test
+```
+
+Don't point the tests at your real database. Transactions are rolled back, but the tests expect the seeded accounts with the default password.
+
+### Adding a test
+
+Create a class in `tests/Feature/` that extends `Tests\TestCase` and uses `DatabaseTransactions`, then push. CI picks it up automatically. Seeded accounts such as `TMC0001` (employee) and `TMC0099` (admin), both with the password `password`, are available in every test.
 
 ---
 
@@ -330,8 +489,8 @@ Log in with either the **email** or **Employee ID** of a seeded record:
 
 | Role | Login | Password | Redirects to |
 |---|---|---|---|
-| Admin | `TMC0001` / admin email | as seeded | `/dashboard` |
-| Employee | `TMC0002` / employee email | as seeded | `/portal` |
+| Admin | `TMC0001` / admin email | `password` | `/dashboard` |
+| Employee | `TMC0002` / employee email | `password` | `/portal` |
 
 ---
 
@@ -344,15 +503,27 @@ Log in with either the **email** or **Employee ID** of a seeded record:
 | CSS not loading | Confirm files are in `public/css/`; run `php artisan optimize:clear`. |
 | `SQLSTATE[HY000] [2002]` | MySQL not running or wrong `DB_HOST` / `DB_PORT`. |
 | 403 on admin pages | Logged-in user's `role` is not `admin`. |
+| ngrok container exits / `ERR_NGROK_4018` | `NGROK_AUTHTOKEN` missing or invalid. Start with `--env-file .env.docker` so the token is passed through. |
+| Unstyled page or forms not submitting through ngrok | Mixed content: make sure `trustProxies(at: '*')` is in `bootstrap/app.php` and rebuild with `--build`. |
+| CI `unit-tests` fails with `no such table` locally | You're on the default SQLite config. Set the `DB_*` env vars as in [Running the tests locally](#running-the-tests-locally). |
+| ngrok URL stopped working | The free URL changes when the container restarts. Check http://localhost:4040 for the new one. |
 
 ---
 
 ## Known Limitations
 
-- **Plaintext password check**: `AuthController@login` compares `password` directly in the query. Replace with `Hash::check()` and store hashed passwords before production.
+- **Default seeded password**: every account in the database dump uses the password `password`. Change these before exposing the app to anyone you don't trust (including over ngrok).
 - **No server-side pagination**: tables use `->get()` and filter client-side; large datasets will slow down. This was done only for testing only because we only had a small dummy dataset.
-- **Chart.js loaded unpinned from CDN**: pin a version (e.g. `chart.js@4.4.1`) for reproducible builds; requires internet access in the browser.
+- **Chart.js loaded unpinned from CDN** (`layouts/app.blade.php`): pin a version (e.g. `chart.js@4.4.1`) for reproducible builds; requires internet access in the browser.
 - **No WebSockets**: real-time updates are client-side timers/AJAX, not pushed from the server.
+
+### Resolved
+
+- ~~**Plaintext password check**~~: `AuthController@login` now looks up the user by email or Employee ID and verifies the password with `Hash::check()`. Only bcrypt hashes (`$2y$...`) are accepted. The `Employee` model casts `password` as `hashed`, so new or changed passwords are hashed automatically. The database dump converts any remaining plaintext passwords to a bcrypt hash.
+- **Login and access auditing**: successful logins, failed attempts (with IP), logouts and denied role checks (`RoleMiddleware`) are now logged. In Docker they go to the container's stderr: `docker compose logs app`.
+- **Employee model saves**: `Employee` now sets `$timestamps = false` (the table has no `updated_at`) and allows `gender` to be filled. Before, any save failed, including setting the "Remember me" token at login.
+- **Automated tests**: feature tests plus a Docker end-to-end job run on every push via GitHub Actions (see [Automated Testing](#automated-testing-github-actions)).
+- **Health check**: `GET /health` returns `{"status":"ok","db":"up"}`, or a 503 if the database is unreachable. The Docker `HEALTHCHECK` uses it, and ngrok only starts once the app is healthy.
 
 ---
 

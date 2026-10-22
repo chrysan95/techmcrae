@@ -2,6 +2,8 @@
 
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 // Controllers
 use App\Http\Controllers\AuthController;
@@ -11,6 +13,19 @@ use App\Http\Controllers\EmployeeController;
 use App\Http\Controllers\AdminDashboardController;
 use App\Http\Controllers\LeaveStatusController;
 use App\Http\Controllers\LeaveRequestController;
+
+// ==================================
+// 0. HEALTH CHECK
+// ==================================
+Route::get('/health', function () {
+    try {
+        DB::select('SELECT 1');
+        return response()->json(['status' => 'ok', 'db' => 'up', 'time' => now()->toIso8601String()]);
+    } catch (\Throwable $e) {
+        Log::error('Health check failed', ['error' => $e->getMessage()]);
+        return response()->json(['status' => 'degraded', 'db' => 'down'], 503);
+    }
+});
 
 // ==================================
 // 1. PUBLIC & AUTHENTICATION ROUTES

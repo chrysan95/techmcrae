@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: mariadb:10.11
+        env:
+          MARIADB_DATABASE: techmcrae
+          MARIADB_ROOT_PASSWORD: root
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_DATABASE: techmcrae
+      DB_USERNAME: root
+      DB_PASSWORD: root
+      SESSION_DRIVER: array
+      CACHE_STORE: array
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_mysql
+          coverage: none
+      - run: composer install --prefer-dist --no-interaction
+      - run: cp .env.example .env && php artisan key:generate
+      - name: Import SQL dump (also hashes passwords)
+        run: |
+          for f in docker/mysql/init/*.sql; do
+            mysql -h127.0.0.1 -uroot -proot techmcrae < "$f"
+          done
+      - run: php artisan test --log-junit junit.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phpunit-report
+          path: junit.xml
+
+  docker-e2e:
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The app reads .env.docker (env_file); Compose interpolates ${DB_*} from .env.
+      - name: Prepare .env.docker
+        run: |
+          cp .env.docker.example .env.docker
+          sed -i "s|^APP_KEY=.*|APP_KEY=base64:$(openssl rand -base64 32)|" .env.docker
+          sed -i "s|^DB_PASSWORD=.*|DB_PASSWORD=ci_pass|" .env.docker
+          sed -i "s|^DB_ROOT_PASSWORD=.*|DB_ROOT_PASSWORD=ci_root|" .env.docker
+          cp .env.docker .env
+
+      - name: Build and start
+        run: docker compose up -d --build --wait
+
+      - name: Show image, containers, ports, network, volumes
+        run: |
+          docker images techmcrae-app
+          docker compose ps
+          docker network ls | grep backend
+          docker volume ls | grep -E 'db_data|app_storage'
+
+      - name: Health check
+        run: curl -fsS http://localhost:8080/health
+
+      - name: Passwords hashed by init SQL
+        run: |
+          echo "SELECT COUNT(*) FROM employees WHERE password NOT LIKE '\$2y\$%';" \
+            | docker compose exec -T db sh -c 'mariadb -uroot -p"$MARIADB_ROOT_PASSWORD" "$MARIADB_DATABASE" -N' \
+            | grep -x 0
+
+      - name: Persistence after container recreation
+        run: |
+          q="INSERT INTO leave_requests (employee_id, leave_from, leave_to, leave_days, leave_type_id, reason) VALUES ('TMC0001', CURDATE(), CURDATE(), 1, 1, 'ci-persistence-probe');"
+          echo "$q" | docker compose exec -T db sh -c 'mariadb -uroot -p"$MARIADB_ROOT_PASSWORD" "$MARIADB_DATABASE"'
+          docker compose down
+          docker compose up -d --wait
+          echo "SELECT COUNT(*) FROM leave_requests WHERE reason='ci-persistence-probe';" \
+            | docker compose exec -T db sh -c 'mariadb -uroot -p"$MARIADB_ROOT_PASSWORD" "$MARIADB_DATABASE" -N' \
+            | grep -x 1
+
+      - name: Fault injection and recovery
+        run: |
+          docker compose stop db
+          sleep 3
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/health)
+          echo "Health while DB down: $code"
+          test "$code" = "503"
+          docker compose start db
+          for i in $(seq 1 30); do
+            curl -fs http://localhost:8080/health && exit 0
+            sleep 2
+          done
+          exit 1
+
+      - name: Collect logs
+        if: always()
+        run: docker compose logs --no-color > compose-logs.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: compose-logs
+          path: compose-logs.txt
+
+      - name: Tear down
+        if: always()
+        run: docker compose down

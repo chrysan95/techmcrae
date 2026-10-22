@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use App\Models\Employee;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Hash;
 
 class AuthController extends Controller
 {
@@ -20,20 +22,22 @@ class AuthController extends Controller
         $loginValue = $request->input('login');
         $passwordValue = $request->input('password');
 
-        // 3. Manually search the database for a matching record (Plain Text Password Check)
-        $user = Employee::where($loginType, $loginValue)
-                        ->where('password', $passwordValue)
-                        ->first();
+        // 3. Manually search the database for a matching record
+        $user = Employee::where($loginType, $loginValue)->first();
 
-        // 4. If a user is found, log them in manually
-        if ($user) {
+        if ($user
+            && str_starts_with((string) $user->password, '$2y$')
+            && Hash::check($passwordValue, $user->password)) {
+
             Auth::login($user, $request->has('remember'));
             $request->session()->regenerate();
-            
-            // Determine where they go, and flash a success flag for the CSS fade-out animation
+            Log::info('Login success', ['employee_id' => $user->employee_id, 'role' => $user->role]);
+
             $destination = $user->role === 'admin' ? '/dashboard' : '/portal';
             return redirect()->intended($destination)->with('login_success', true);
         }
+
+        Log::warning('Login failed', ['login' => $loginValue, 'ip' => $request->ip()]);
 
         // 5. If no user is found, send them back with an error
         return back()->withErrors([
@@ -43,6 +47,7 @@ class AuthController extends Controller
 
     public function logout(Request $request)
     {
+         Log::info('Logout', ['employee_id' => Auth::user()?->employee_id]);
         Auth::logout();
         $request->session()->invalidate();
         $request->session()->regenerateToken();

@@ -12,16 +12,21 @@ class Employee extends Authenticatable
     protected $primaryKey = 'employee_id';
     public $incrementing = false;
     protected $keyType = 'string';
+    public $timestamps = false; // Handled via database defaults
 
     protected $fillable = [
-        'employee_id', 'name', 'email', 'phone_number', 
-        'address', 'birth_date', 'password', 'role', 'department'
+        'employee_id', 'name', 'email', 'phone_number',
+        'address', 'birth_date', 'gender', 'password', 'role', 'department'
     ];
 
     protected $hidden = [
         'password', 'remember_token',
     ];
 
+    protected $casts = [
+        'password' => 'hashed',
+    ];
+    
     // Relationships
     public function attendances()
     {
